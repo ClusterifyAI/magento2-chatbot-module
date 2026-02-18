@@ -1,0 +1,19 @@
+<?php
+/** @var \ClusterifyAI\Chatbot\Block\ChatBot $block */
+$uuid = $block->getUuid();
+$scriptSrc = $block->getLoaderJsUrl();
+?>
+<?php if ($block->isEnabled() && $uuid): ?>
+<!-- Clusterify.AI ChatBot Loader - START -->
+<script id="clusterify-chatbot-script">
+    (function () {
+        window.__clusterify = window.__clusterify || {};
+        window.__clusterify.public_uuid = "<?= $block->escapeJs($uuid) ?>";
+        var script = document.createElement("script");
+        script.src = "<?= $block->escapeUrl($scriptSrc) ?>";
+        document.head.appendChild(script);
+    })();
+</script>
+<noscript>Please enable JavaScript to use the Clusterify.AI ChatBot.</noscript>
+<!-- Clusterify.AI ChatBot Loader - END -->
+<?php endif; ?>

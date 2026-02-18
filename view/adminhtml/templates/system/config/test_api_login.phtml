@@ -1,0 +1,59 @@
+<?php
+/**
+ * @var $block \ClusterifyAI\Chatbot\Block\Adminhtml\System\Config\TestApiLogin
+ */
+?>
+<div class="actions actions-test-api-login" style="display: flex; align-items: center; gap: 10px;">
+    <button class="action-validate-test-api-login" type="button" id="<?= $block->getHtmlId() ?>_btn">
+        <span><?= $block->escapeHtml($block->getButtonLabel()) ?></span>
+    </button>
+    <span class="test-api-login-result" id="<?= $block->getHtmlId() ?>_result" style="font-weight: bold;"></span>
+</div>
+
+<script>
+    require(['jquery'], function ($) {
+        $('#<?= $block->getHtmlId() ?>_btn').click(function () {
+            var baseUrlField = $('#clusterifyai_api_general_api_base_url');
+            var loginPathField = $('#clusterifyai_api_general_api_login_path');
+            var publicKeyField = $('#clusterifyai_api_general_public_key');
+            var secretKeyField = $('#clusterifyai_api_general_secret_key');
+            
+            var resultSpan = $('#<?= $block->getHtmlId() ?>_result');
+
+            var baseUrl = baseUrlField.val();
+            var loginPath = loginPathField.val();
+            var publicKey = publicKeyField.val();
+            var secretKey = secretKeyField.val();
+
+            resultSpan.text('Logging in...').css('color', 'black');
+
+            if (!baseUrl || !loginPath || !publicKey || !secretKey) {
+                resultSpan.text('Please fill all required fields properly.').css('color', 'red');
+                return;
+            }
+
+            $.ajax({
+                url: '<?= $block->escapeUrl($block->getAjaxUrl()) ?>',
+                dataType: 'json',
+                type: 'POST',
+                data: {
+                    api_base_url: baseUrl,
+                    api_login_path: loginPath,
+                    public_key: publicKey,
+                    secret_key: secretKey,
+                    form_key: window.FORM_KEY
+                },
+                success: function (response) {
+                    if (response.success) {
+                        resultSpan.text('SUCCESS! Token received.').css('color', 'green');
+                    } else {
+                        resultSpan.text('FAILED: ' + response.message).css('color', 'red');
+                    }
+                },
+                error: function () {
+                   resultSpan.text('Network Error or Server Error').css('color', 'red');
+                }
+            });
+        });
+    });
+</script>

@@ -1,0 +1,117 @@
+<?php
+/**
+ * @var $block \ClusterifyAI\Chatbot\Block\Adminhtml\System\Config\TestConnection
+ */
+?>
+<div class="actions actions-test-connection" style="display: flex; flex-direction: column; gap: 10px;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+        <button class="action-validate-test-connection" type="button" id="<?= $block->getHtmlId() ?>_btn">
+            <span><?= $block->escapeHtml($block->getButtonLabel()) ?></span>
+        </button>
+        <span class="test-connection-result" id="<?= $block->getHtmlId() ?>_result" style="font-weight: bold;"></span>
+    </div>
+    <div id="<?= $block->getHtmlId() ?>_details" style="display: none; margin-top: 10px; border: 1px solid #ccc; padding: 10px; background: #f9f9f9;">
+        <div><strong>Widget Load Status:</strong> <span id="<?= $block->getHtmlId() ?>_widget_status">Pending...</span></div>
+        <div><strong>API Status:</strong> <span id="<?= $block->getHtmlId() ?>_api_status">Pending...</span></div>
+        <div><strong>ChatBot Status:</strong> <span id="<?= $block->getHtmlId() ?>_chatbot_status">Pending...</span></div>
+    </div>
+</div>
+
+<script>
+    require(['jquery'], function ($) {
+        $('#<?= $block->getHtmlId() ?>_btn').click(function () {
+            // ChatBot Fields from Current Form
+            var loaderPathField = $('#clusterifyai_chatbot_connection_loader_js_path');
+            var statusCheckPathField = $('#clusterifyai_chatbot_connection_status_check_path');
+            var uuidField = $('#clusterifyai_chatbot_connection_uuid');
+
+            var resultSpan = $('#<?= $block->getHtmlId() ?>_result');
+            var detailsDiv = $('#<?= $block->getHtmlId() ?>_details');
+            var widgetStatusSpan = $('#<?= $block->getHtmlId() ?>_widget_status');
+            var apiStatusSpan = $('#<?= $block->getHtmlId() ?>_api_status');
+            var chatbotStatusSpan = $('#<?= $block->getHtmlId() ?>_chatbot_status');
+
+            // Values
+            var baseUrl = '<?= $block->escapeJs($block->getApiBaseUrl()) ?>';
+            var loaderPath = loaderPathField.val();
+            var statusCheckPath = statusCheckPathField.val();
+            var uuid = uuidField.val();
+
+            // Reset UI
+            resultSpan.text('Testing...').css('color', 'black');
+            detailsDiv.show();
+            widgetStatusSpan.text('Pending...').css('color', 'orange');
+            apiStatusSpan.text('Pending...').css('color', 'orange');
+            chatbotStatusSpan.text('Pending...').css('color', 'orange');
+
+            var missingFields = [];
+            if (!baseUrl) missingFields.push('Api Base URL (Check API Access config)');
+            if (!loaderPath) missingFields.push('Loader JS Path');
+            if (!statusCheckPath) missingFields.push('Status Check Path');
+            if (!uuid) missingFields.push('UUID');
+
+            if (missingFields.length > 0) {
+                resultSpan.text('Missing fields: ' + missingFields.join(', ')).css('color', 'red');
+                return;
+            }
+
+            // 1. Browser-Side Widget Load Check
+            var cleanBaseUrl = baseUrl.replace(/\/$/, "");
+            var cleanLoaderPath = loaderPath.replace(/^\//, "");
+            var loaderUrl = cleanBaseUrl + '/' + cleanLoaderPath;
+
+            fetch(loaderUrl, { method: 'HEAD' })
+                .then(response => {
+                    if (response.ok) {
+                        widgetStatusSpan.text('SUCCESS').css('color', 'green');
+                    } else {
+                        widgetStatusSpan.text('FAILED (' + response.status + ')').css('color', 'red');
+                    }
+                })
+                .catch(error => {
+                    widgetStatusSpan.text('FAILED (Network/CORS)').css('color', 'red');
+                });
+
+            // 2. Server-Side Auth & Status Check
+            $.ajax({
+                url: '<?= $block->escapeUrl($block->getAjaxUrl()) ?>',
+                dataType: 'json',
+                type: 'POST',
+                data: {
+                    // We only send ChatBot specific fields. API fields are fetched from Config on server.
+                    loader_js_path: loaderPath,
+                    status_check_path: statusCheckPath,
+                    uuid: uuid,
+                    form_key: window.FORM_KEY
+                },
+                success: function (response) {
+                    // Auth Status
+                    if (response.auth_status) {
+                        apiStatusSpan.text(response.auth_status).css('color', response.auth_status === 'Enabled' ? 'green' : 'red');
+                    } else {
+                        apiStatusSpan.text('Unknown').css('color', 'black');
+                    }
+
+                    // ChatBot Status
+                    if (response.chatbot_status) {
+                        chatbotStatusSpan.text(response.chatbot_status).css('color', response.chatbot_status === 'Enabled' ? 'green' : 'red');
+                    } else {
+                        chatbotStatusSpan.text('Unknown').css('color', 'black');
+                    }
+                    
+                    if (response.success) {
+                        resultSpan.text('Server Checks Passed').css('color', 'green');
+                    } else {
+                         var msg = response.message || 'Check failures above.';
+                        resultSpan.text(msg).css('color', 'red');
+                    }
+                },
+                error: function () {
+                   apiStatusSpan.text('Error').css('color', 'red');
+                   chatbotStatusSpan.text('Error').css('color', 'red');
+                   resultSpan.text('Server Error').css('color', 'red');
+                }
+            });
+        });
+    });
+</script>
