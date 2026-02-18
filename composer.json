@@ -1,0 +1,21 @@
+{
+    "name": "clusterifyai/module-chatbot",
+    "description": "Clusterify.AI ChatBot & Assistant for Magento 2",
+    "require": {
+        "php": "~7.4.0||~8.1.0||~8.2.0||~8.3.0",
+        "magento/framework": "*"
+    },
+    "type": "magento2-module",
+    "version": "1.0.0",
+    "license": [
+        "MIT"
+    ],
+    "autoload": {
+        "files": [
+            "registration.php"
+        ],
+        "psr-4": {
+            "ClusterifyAI\\Chatbot\\": ""
+        }
+    }
+}
