@@ -1,6 +1,6 @@
 # Clusterify.AI ChatBot & Assistant for Magento 2
 
-** This is a pre version and the first release will come in weeks. All feedbacks are welcome! **
+**This is a pre version and the first release will come in weeks.**
 
 ## Introduction
 
@@ -57,7 +57,7 @@ To configure the module:
 3.  In the left sidebar, expand **Clusterify.AI**.
 4.  **Configure API Access:**
     - Select **API Access** on the left hand side menu.
-    - Enter your **API Base URL** (e.g., `https://dashboard.clusterify.ai/api`).
+    - Default **API Base URL** is `https://api.clusterify.ai`.
     - Enter your **Public Key** and **Secret Key**.
     - Click **TEST API Login** to verify your credentials.
     - **Save Config**.
@@ -65,10 +65,11 @@ To configure the module:
     - Select **ChatBot** on the left hand side menu.
     - Expand the **Connection** section.
     - Enter your **Chatbot UUID**. (Found in your Clusterify.AI Dashboard settings).
+    - **Save Config**.
     - Click **Test Connection** to verify the chatbot is accessible.
 6.  **Configure Visibility:**
     - Expand **Display Settings**.
-    - Choose exactly which pages the chatbot should appear on (Home, Product, Checkout, etc.). Recommended to allow the chatbot only one page type first to test. Then open the rest of them.
+    - Choose exactly which pages the chatbot should appear on (Home, Product, Checkout, etc.). Recommended to allow only one page type first to test. Then enable the rest of them you want.
 7.  **Go Live:**
     - Expand the **General** section.
     - Set **Is Enabled** to **Yes**.
