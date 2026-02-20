@@ -38,6 +38,7 @@
             <guide_attributes>
                 <enable_guide_products>0</enable_guide_products>
                 <enable_guide_categories>0</enable_guide_categories>
+                <enable_guide_cms>0</enable_guide_cms>
             </guide_attributes>
         </clusterifyai_chatbot>
     </default>

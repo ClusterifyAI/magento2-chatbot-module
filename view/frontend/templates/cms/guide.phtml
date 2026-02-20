@@ -1,0 +1,17 @@
+<?php
+/**
+ * @var \ClusterifyAI\Chatbot\Block\Cms\Guide $block
+ * @var \Magento\Framework\Escaper $escaper
+ */
+
+if ($block->isFeatureEnabled()):
+    $guideValue = $block->getGuideAttributeValue();
+    if (!empty($guideValue)):
+?>
+<div id="clusterify-chatbot-guide-field" hidden class="hidden" aria-hidden="true">
+    <?= /* @noEscape */ nl2br($escaper->escapeHtml($guideValue)) ?>
+</div>
+<?php 
+    endif;
+endif;
+?>
