@@ -104,6 +104,12 @@ You can provide hidden instructions or additional context directly to the chatbo
 1. **Enable the feature**: Go to **Stores > Configuration > Clusterify.AI > ChatBot > ChatBot Guide Attributes** and set **Enable Guide Field for Products** to **Yes**.
 2. **Configure the product**: When editing a product in the Magento Admin Panel, open the **Clusterify.AI - ChatBot Guide** accordion and enter your instructions in the **Additional information for Chatbot** field.
 
+**Categories:**
+You can also provide hidden instructions specifically for category pages.
+
+1. **Enable the feature**: Go to **Stores > Configuration > Clusterify.AI > ChatBot > ChatBot Guide Attributes** and set **Enable Guide Field for Categories** to **Yes**.
+2. **Configure the category**: When editing a category in the Magento Admin Panel, expand the **Clusterify.AI - ChatBot Guide** section and enter your instructions in the **Additional information for Chatbot** field.
+
 ## Technical Description
 
 The module is designed to be lightweight and performance-friendly.
