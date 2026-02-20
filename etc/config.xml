@@ -35,6 +35,9 @@
                 <show_on_wishlist>0</show_on_wishlist>
                 <show_on_other>0</show_on_other>
             </display_settings>
+            <guide_attributes>
+                <enable_guide_products>0</enable_guide_products>
+            </guide_attributes>
         </clusterifyai_chatbot>
     </default>
 </config>

@@ -17,5 +17,11 @@
         "psr-4": {
             "ClusterifyAI\\Chatbot\\": ""
         }
+    },
+    "authors": [
+    {
+      "name": "Zsolt Szalay",
+      "email": "zszalay@clusterify.ai"
     }
+  ]
 }

@@ -94,6 +94,16 @@ You have full control over where the chatbot appears on your site. Under the **D
 - **Compare / Wishlist**: Control visibility on these utility pages.
 - **Other Pages**: Fallback for any page not covered by the types above.
 
+### ChatBot Guide Attributes
+
+The Clusterify.AI ChatBot can read specific hidden attributes from your store pages to provide more accurate and context-aware responses and guidance to your customers.
+
+**Products:**
+You can provide hidden instructions or additional context directly to the chatbot on a per-product basis.
+
+1. **Enable the feature**: Go to **Stores > Configuration > Clusterify.AI > ChatBot > ChatBot Guide Attributes** and set **Enable Guide Field for Products** to **Yes**.
+2. **Configure the product**: When editing a product in the Magento Admin Panel, open the **Clusterify.AI - ChatBot Guide** accordion and enter your instructions in the **Additional information for Chatbot** field.
+
 ## Technical Description
 
 The module is designed to be lightweight and performance-friendly.
@@ -116,7 +126,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## Support
 
-If you encounter any issues or have questions, please contact our support team at [support@clusterify.ai](mailto:support@clusterify.ai) or satisfy a ticket in your Clusterify.AI dashboard.
+If you encounter any issues or have questions, please contact our support team at [support@clusterify.ai](mailto:support@clusterify.ai).
 
 ## Frequently Asked Questions (FAQ)
 

@@ -17,3 +17,769 @@ $scriptSrc = $block->getLoaderJsUrl();
 <noscript>Please enable JavaScript to use the Clusterify.AI ChatBot.</noscript>
 <!-- Clusterify.AI ChatBot Loader - END -->
 <?php endif; ?>
+
+<script>
+/**
+ * SAFE DOM EXTRACTOR (Vanilla JS, non-mutating, modular, error-safe)
+ * - Does not modify the page.
+ * - Modular toggles per extractor.
+ * - Extracts:
+ *   1) Text (visible + hidden)
+ *   2) Links
+ *   3) Buttons
+ *   4) Images (src/alt + location)
+ *   5) <table> structures (span-aware)
+ *   6) ARIA role="table" structures
+ *   7) CSS Grid structures (best-effort via computed grid placement)
+ *   8) Flex layouts (best-effort via geometry row/col grouping)
+ *   9) Repeated "card"/record blocks (best-effort heuristic)
+ *
+ * Skips: script/style/noscript/iframe/object/embed/svg/canvas/template/head/meta/link
+ *
+ * Usage:
+ *   const out = DomScrubber.extract({ enable: { tables: true, flex: false }});
+ *   console.log(out);
+ */
+const DomScrubber = (() => {
+  // -------------------- config defaults --------------------
+  const DEFAULTS = {
+    root: () => document.body,
+    debug: true,
+    includeVisibleText: true,
+    includeHiddenText: true,
+    maxTextChars: 400000,
+    maxItems: 5000,
+    maxTables: 200,
+    maxRecords: 2000,
+    // Toggle extractors
+    enable: {
+      text: true,
+      links: true,
+      buttons: true,
+      images: true,
+      tables: true,
+      ariaTables: true,
+      cssGrid: true,
+      flex: true,
+      records: true,
+    },
+  };
+
+  const EXCLUDE_TAGS = new Set([
+    "SCRIPT", "STYLE", "NOSCRIPT", "IFRAME", "OBJECT", "EMBED",
+    "SVG", "CANVAS", "TEMPLATE", "HEAD", "META", "LINK"
+  ]);
+
+  // -------------------- safe logging --------------------
+  function log(cfg, ...args) {
+    try { if (cfg.debug) console.log("[DomScrubber]", ...args); } catch (_) {}
+  }
+  function warn(cfg, ...args) {
+    try { if (cfg.debug) console.warn("[DomScrubber]", ...args); } catch (_) {}
+  }
+
+  // -------------------- safe execution wrapper --------------------
+  function safe(cfg, label, fn, fallback) {
+    try {
+      return fn();
+    } catch (e) {
+      warn(cfg, `${label} failed:`, e);
+      return fallback;
+    }
+  }
+
+  // -------------------- helpers --------------------
+  function mergeDeep(base, patch) {
+    const out = Array.isArray(base) ? base.slice() : { ...base };
+    for (const k in patch || {}) {
+      const pv = patch[k];
+      const bv = base ? base[k] : undefined;
+      if (pv && typeof pv === "object" && !Array.isArray(pv)) out[k] = mergeDeep(bv || {}, pv);
+      else out[k] = pv;
+    }
+    return out;
+  }
+
+  function isExcluded(el) {
+    return !el || el.nodeType !== 1 || EXCLUDE_TAGS.has(el.tagName);
+  }
+
+  function inExcludedAncestor(el) {
+    try {
+      return !!(el && el.closest && el.closest("script,style,noscript,iframe,object,embed,svg,canvas,template,head,meta,link"));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function getCS(el) {
+    try { return getComputedStyle(el); } catch (_) { return null; }
+  }
+
+  function isElementVisible(el) {
+    // best-effort visibility: fast checks + computed style
+    try {
+      if (!el || el.nodeType !== 1) return false;
+      if (el.hidden) return false;
+      if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return false;
+      const cs = getCS(el);
+      if (!cs) return true;
+      if (cs.display === "none" || cs.visibility === "hidden") return false;
+      if (cs.opacity === "0") return false;
+
+      // layout check (not perfect, but helps)
+      if (el.offsetParent === null && cs.position !== "fixed" && cs.position !== "sticky") return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function normalizeText(s) {
+    return (s || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim();
+  }
+
+  function elText(el) {
+    try {
+      const t = (el.innerText || el.textContent || "").trim();
+      if (t) return t;
+      const aria = el.getAttribute && (el.getAttribute("aria-label") || el.getAttribute("title"));
+      return (aria || "").trim();
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function cssPath(el) {
+    // short, stable-ish path for debugging / locating
+    try {
+      if (!el || el.nodeType !== 1) return "";
+      const parts = [];
+      let cur = el;
+      for (let i = 0; cur && i < 6; i++) {
+        let part = cur.tagName.toLowerCase();
+        const id = cur.id && cur.id.trim();
+        if (id) {
+          part += `#${CSS.escape(id)}`;
+          parts.unshift(part);
+          break;
+        }
+        const cls = (cur.className && typeof cur.className === "string")
+          ? cur.className.trim().split(/\s+/).slice(0, 2).map(c => `.${CSS.escape(c)}`).join("")
+          : "";
+        if (cls) part += cls;
+
+        const parent = cur.parentElement;
+        if (parent) {
+          const siblings = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+          if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(cur) + 1})`;
+        }
+
+        parts.unshift(part);
+        cur = cur.parentElement;
+      }
+      return parts.join(" > ");
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function safePush(cfg, arr, seenSet, item, keyFn) {
+    if (!item) return;
+    if (arr.length >= cfg.maxItems) return;
+    let key = "";
+    try { key = keyFn(item) || ""; } catch (_) { key = ""; }
+    if (!key) return;
+    if (seenSet.has(key)) return;
+    seenSet.add(key);
+    arr.push(item);
+  }
+
+  // -------------------- extractor: links --------------------
+  function extractLinks(cfg, root) {
+    const links = [];
+    const seen = new Set();
+
+    const nodes = root.querySelectorAll ? root.querySelectorAll("a[href]") : [];
+    nodes.forEach(a => {
+      if (isExcluded(a) || inExcludedAncestor(a)) return;
+      const hrefAttr = safe(cfg, "link href", () => a.getAttribute("href") || "", "");
+      if (!hrefAttr || hrefAttr.startsWith("javascript:")) return;
+
+      const item = {
+        text: elText(a),
+        href: safe(cfg, "link resolved href", () => a.href || hrefAttr, hrefAttr),
+        rel: safe(cfg, "link rel", () => a.getAttribute("rel") || "", ""),
+        target: safe(cfg, "link target", () => a.getAttribute("target") || "", ""),
+        path: cssPath(a),
+        visible: isElementVisible(a),
+      };
+      safePush(cfg, links, seen, item, it => `${it.href}|${it.text}|${it.path}`);
+    });
+
+    return links;
+  }
+
+  // -------------------- extractor: buttons --------------------
+  function extractButtons(cfg, root) {
+    const buttons = [];
+    const seen = new Set();
+    const sel = "button,[role='button'],input[type='button'],input[type='submit']";
+    const nodes = root.querySelectorAll ? root.querySelectorAll(sel) : [];
+    nodes.forEach(b => {
+      if (isExcluded(b) || inExcludedAncestor(b)) return;
+
+      const item = {
+        text: elText(b),
+        tag: (b.tagName || "").toLowerCase(),
+        type: safe(cfg, "button type", () => (b.getAttribute && b.getAttribute("type")) || "", ""),
+        name: safe(cfg, "button name", () => (b.getAttribute && b.getAttribute("name")) || "", ""),
+        value: safe(cfg, "button value", () => (b.value || "").trim(), ""),
+        path: cssPath(b),
+        visible: isElementVisible(b),
+      };
+      safePush(cfg, buttons, seen, item, it => `${it.text}|${it.tag}|${it.type}|${it.path}`);
+    });
+    return buttons;
+  }
+
+  // -------------------- extractor: images --------------------
+  function extractImages(cfg, root) {
+    const images = [];
+    const seen = new Set();
+
+    const nodes = root.querySelectorAll ? root.querySelectorAll("img,source") : [];
+    nodes.forEach(n => {
+      if (isExcluded(n) || inExcludedAncestor(n)) return;
+      const tag = (n.tagName || "").toLowerCase();
+
+      const src = safe(cfg, "image src", () => {
+        if (tag === "img") return n.currentSrc || n.src || n.getAttribute("src") || "";
+        return n.getAttribute("srcset") || n.getAttribute("src") || "";
+      }, "");
+
+      if (!src) return;
+
+      const hostEl = tag === "img" ? n : (n.parentElement || n);
+      const item = {
+        src,
+        alt: tag === "img" ? (safe(cfg, "image alt", () => n.getAttribute("alt") || "", "")).trim() : "",
+        title: tag === "img" ? (safe(cfg, "image title", () => n.getAttribute("title") || "", "")).trim() : "",
+        width: tag === "img" ? safe(cfg, "image width", () => n.naturalWidth || n.width || null, null) : null,
+        height: tag === "img" ? safe(cfg, "image height", () => n.naturalHeight || n.height || null, null) : null,
+        loading: tag === "img" ? safe(cfg, "image loading", () => n.getAttribute("loading") || "", "") : "",
+        path: cssPath(hostEl),
+        visible: isElementVisible(hostEl),
+      };
+      safePush(cfg, images, seen, item, it => `${it.src}|${it.alt}|${it.path}`);
+    });
+
+    return images;
+  }
+
+  // -------------------- extractor: text nodes (visible + hidden) --------------------
+  function extractText(cfg, root) {
+    const visibleChunks = [];
+    const hiddenChunks = [];
+
+    const walker = safe(cfg, "TreeWalker init", () => document.createTreeWalker(
+      root,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(node) {
+          try {
+            const p = node.parentElement;
+            if (!p) return NodeFilter.FILTER_REJECT;
+            if (isExcluded(p) || inExcludedAncestor(p)) return NodeFilter.FILTER_REJECT;
+
+            const v = node.nodeValue;
+            if (!v || !v.trim()) return NodeFilter.FILTER_REJECT;
+
+            const vis = isElementVisible(p);
+            if (vis && cfg.includeVisibleText) return NodeFilter.FILTER_ACCEPT;
+            if (!vis && cfg.includeHiddenText) return NodeFilter.FILTER_ACCEPT;
+            return NodeFilter.FILTER_REJECT;
+          } catch (_) {
+            return NodeFilter.FILTER_REJECT;
+          }
+        }
+      }
+    ), null);
+
+    if (!walker) return { textVisible: "", textHidden: "", textAll: "" };
+
+    let node, total = 0;
+    while ((node = safe(cfg, "TreeWalker nextNode", () => walker.nextNode(), null))) {
+      if (!node) break;
+      const p = node.parentElement;
+      const piece = safe(cfg, "text node value", () => (node.nodeValue || "").trim(), "");
+      if (!piece) continue;
+
+      const vis = isElementVisible(p);
+      if (vis && cfg.includeVisibleText) visibleChunks.push(piece);
+      else if (!vis && cfg.includeHiddenText) hiddenChunks.push(piece);
+
+      total += piece.length;
+      if (total >= cfg.maxTextChars) break;
+    }
+
+    const textVisible = normalizeText(visibleChunks.join("\n"));
+    const textHidden = normalizeText(hiddenChunks.join("\n"));
+    const textAll = normalizeText([textVisible, textHidden].filter(Boolean).join("\n\n"));
+
+    return { textVisible, textHidden, textAll };
+  }
+
+  // -------------------- extractor: HTML tables (<table>) span-aware --------------------
+  function extractHtmlTables(cfg, root) {
+    const tables = [];
+    const nodes = root.querySelectorAll ? root.querySelectorAll("table") : [];
+    const limit = Math.min(nodes.length, cfg.maxTables);
+
+    for (let t = 0; t < limit; t++) {
+      const table = nodes[t];
+      if (isExcluded(table) || inExcludedAncestor(table)) continue;
+
+      const parsed = safe(cfg, "parse <table>", () => {
+        const caption = (() => {
+          const cap = table.querySelector("caption");
+          return cap ? normalizeText(cap.innerText || cap.textContent || "") : "";
+        })();
+
+        const rows = Array.from(table.querySelectorAll("tr"));
+        // span-aware placement
+        const grid = [];
+        const occupancy = []; // occupancy[r][c] true if occupied by span
+
+        function ensureRow(r) {
+          if (!grid[r]) grid[r] = [];
+          if (!occupancy[r]) occupancy[r] = [];
+        }
+
+        function nextFreeCol(r, startC) {
+          ensureRow(r);
+          let c = startC;
+          while (occupancy[r][c]) c++;
+          return c;
+        }
+
+        for (let r = 0; r < rows.length; r++) {
+          ensureRow(r);
+          const cells = Array.from(rows[r].children).filter(el => el.tagName === "TD" || el.tagName === "TH");
+
+          let c = 0;
+          for (const cell of cells) {
+            c = nextFreeCol(r, c);
+
+            const rowspan = Math.max(1, parseInt(cell.getAttribute("rowspan") || "1", 10) || 1);
+            const colspan = Math.max(1, parseInt(cell.getAttribute("colspan") || "1", 10) || 1);
+
+            const cellText = normalizeText(elText(cell));
+            const cellLinks = safe(cfg, "cell links", () =>
+              Array.from(cell.querySelectorAll("a[href]")).slice(0, 10).map(a => ({
+                text: elText(a),
+                href: a.href || a.getAttribute("href") || ""
+              })), []
+            );
+
+            // place in grid
+            grid[r][c] = {
+              text: cellText,
+              isHeader: cell.tagName === "TH",
+              rowspan,
+              colspan,
+              links: cellLinks,
+            };
+
+            // mark occupancy for spans
+            for (let rr = r; rr < r + rowspan; rr++) {
+              ensureRow(rr);
+              for (let cc = c; cc < c + colspan; cc++) {
+                occupancy[rr][cc] = true;
+                if (rr !== r || cc !== c) {
+                  // fill placeholder for spanned area (optional)
+                  if (!grid[rr][cc]) grid[rr][cc] = { spanOf: [r, c] };
+                }
+              }
+            }
+
+            c += colspan;
+          }
+        }
+
+        return {
+          type: "table",
+          caption,
+          path: cssPath(table),
+          visible: isElementVisible(table),
+          grid, // 2D matrix with spans
+        };
+      }, null);
+
+      if (parsed) tables.push(parsed);
+    }
+
+    return tables;
+  }
+
+  // -------------------- extractor: ARIA role tables --------------------
+  function extractAriaTables(cfg, root) {
+    const out = [];
+    const nodes = root.querySelectorAll ? root.querySelectorAll("[role='table']") : [];
+    const limit = Math.min(nodes.length, cfg.maxTables);
+
+    for (let i = 0; i < limit; i++) {
+      const table = nodes[i];
+      if (isExcluded(table) || inExcludedAncestor(table)) continue;
+
+      const parsed = safe(cfg, "parse ARIA table", () => {
+        const rows = Array.from(table.querySelectorAll("[role='row']"));
+        const grid = rows.map(row => {
+          const cells = Array.from(row.querySelectorAll("[role='columnheader'],[role='rowheader'],[role='cell']"));
+          return cells.map(cell => ({
+            text: normalizeText(elText(cell)),
+            role: cell.getAttribute("role") || "cell",
+            path: cssPath(cell),
+          }));
+        });
+
+        return {
+          type: "ariaTable",
+          path: cssPath(table),
+          visible: isElementVisible(table),
+          grid,
+        };
+      }, null);
+
+      if (parsed) out.push(parsed);
+    }
+    return out;
+  }
+
+  // -------------------- extractor: CSS grid best-effort --------------------
+  function extractCssGrids(cfg, root) {
+    const out = [];
+    const nodes = root.querySelectorAll ? root.querySelectorAll("*") : [];
+    // We will scan but stop early for performance
+    const scanLimit = Math.min(nodes.length, 3000);
+
+    for (let i = 0, found = 0; i < scanLimit && found < cfg.maxTables; i++) {
+      const el = nodes[i];
+      if (isExcluded(el) || inExcludedAncestor(el)) continue;
+
+      const cs = getCS(el);
+      if (!cs || cs.display !== "grid") continue;
+
+      // Avoid tiny grids that are just layout wrappers with no content
+      const children = el.children ? Array.from(el.children) : [];
+      if (children.length < 4) continue;
+
+      const grid = safe(cfg, "parse CSS grid", () => {
+        const items = children
+          .filter(ch => !isExcluded(ch) && !inExcludedAncestor(ch))
+          .map(ch => {
+            const ccs = getCS(ch);
+            const rowStart = parseInt((ccs && ccs.gridRowStart) || "0", 10) || 0;
+            const rowEnd = parseInt((ccs && ccs.gridRowEnd) || "0", 10) || 0;
+            const colStart = parseInt((ccs && ccs.gridColumnStart) || "0", 10) || 0;
+            const colEnd = parseInt((ccs && ccs.gridColumnEnd) || "0", 10) || 0;
+            return {
+              text: normalizeText(elText(ch)),
+              path: cssPath(ch),
+              rowStart, rowEnd, colStart, colEnd,
+              orderHint: ccs && ccs.order ? parseInt(ccs.order, 10) || 0 : 0,
+              visible: isElementVisible(ch),
+            };
+          })
+          .filter(it => it.text);
+
+        if (!items.length) return null;
+
+        // If explicit row/col positions exist (non-zero and not NaN), we can build a matrix
+        const positioned = items.some(it => it.rowStart > 0 || it.colStart > 0);
+        return { items, positioned };
+      }, null);
+
+      if (grid) {
+        out.push({
+          type: "cssGrid",
+          path: cssPath(el),
+          visible: isElementVisible(el),
+          ...grid
+        });
+        found++;
+      }
+    }
+
+    return out;
+  }
+
+  // -------------------- extractor: Flex layouts best-effort (geometry grouping) --------------------
+  function extractFlexLayouts(cfg, root) {
+    const out = [];
+    const nodes = root.querySelectorAll ? root.querySelectorAll("*") : [];
+    const scanLimit = Math.min(nodes.length, 3000);
+
+    for (let i = 0, found = 0; i < scanLimit && found < cfg.maxTables; i++) {
+      const el = nodes[i];
+      if (isExcluded(el) || inExcludedAncestor(el)) continue;
+
+      const cs = getCS(el);
+      if (!cs || cs.display !== "flex") continue;
+
+      const children = el.children ? Array.from(el.children) : [];
+      if (children.length < 4) continue;
+
+      const parsed = safe(cfg, "parse flex", () => {
+        const dir = cs.flexDirection || "row";
+        const wrap = cs.flexWrap || "nowrap";
+
+        const items = children
+          .filter(ch => !isExcluded(ch) && !inExcludedAncestor(ch))
+          .map(ch => {
+            const r = ch.getBoundingClientRect();
+            return {
+              text: normalizeText(elText(ch)),
+              path: cssPath(ch),
+              rect: { top: r.top, left: r.left, width: r.width, height: r.height },
+              visible: isElementVisible(ch),
+              orderHint: (() => {
+                const ccs = getCS(ch);
+                return ccs && ccs.order ? parseInt(ccs.order, 10) || 0 : 0;
+              })(),
+            };
+          })
+          .filter(it => it.text && it.rect.width > 0 && it.rect.height > 0);
+
+        if (items.length < 4) return null;
+
+        // group into rows/cols by position
+        const axis = dir.startsWith("column") ? "left" : "top";
+        const cross = dir.startsWith("column") ? "top" : "left";
+
+        // sort by main axis then cross axis
+        items.sort((a, b) => (a.rect[axis] - b.rect[axis]) || (a.rect[cross] - b.rect[cross]) || (a.orderHint - b.orderHint));
+
+        const groups = [];
+        const tolerance = 8; // px grouping tolerance
+
+        for (const it of items) {
+          const val = it.rect[axis];
+          let g = groups.find(gr => Math.abs(gr.key - val) <= tolerance);
+          if (!g) {
+            g = { key: val, items: [] };
+            groups.push(g);
+          }
+          g.items.push(it);
+        }
+
+        // within each group, order by cross axis
+        groups.forEach(g => g.items.sort((a, b) => (a.rect[cross] - b.rect[cross]) || (a.orderHint - b.orderHint)));
+
+        return {
+          flexDirection: dir,
+          flexWrap: wrap,
+          groups: groups.map(g => g.items.map(x => ({ text: x.text, path: x.path, visible: x.visible }))),
+        };
+      }, null);
+
+      if (parsed) {
+        out.push({
+          type: "flex",
+          path: cssPath(el),
+          visible: isElementVisible(el),
+          ...parsed
+        });
+        found++;
+      }
+    }
+
+    return out;
+  }
+
+  // -------------------- extractor: records/cards heuristic --------------------
+  function extractRecords(cfg, root) {
+    // Heuristic: find parents with many children that share similar tag/class patterns.
+    const out = [];
+    const nodes = root.querySelectorAll ? root.querySelectorAll("*") : [];
+    const scanLimit = Math.min(nodes.length, 2500);
+
+    function signature(el) {
+      try {
+        const tag = el.tagName;
+        const cls = (el.className && typeof el.className === "string")
+          ? el.className.trim().split(/\s+/).slice(0, 3).join(".")
+          : "";
+        return cls ? `${tag}.${cls}` : tag;
+      } catch (_) {
+        return "";
+      }
+    }
+
+    for (let i = 0; i < scanLimit && out.length < cfg.maxRecords; i++) {
+      const parent = nodes[i];
+      if (isExcluded(parent) || inExcludedAncestor(parent)) continue;
+
+      const kids = parent.children ? Array.from(parent.children) : [];
+      if (kids.length < 6) continue;
+
+      // compute repeated signatures among children
+      const counts = new Map();
+      for (const k of kids) {
+        if (isExcluded(k) || inExcludedAncestor(k)) continue;
+        const sig = signature(k);
+        if (!sig) continue;
+        counts.set(sig, (counts.get(sig) || 0) + 1);
+      }
+
+      // Find a dominant repeated child type (like product cards)
+      let bestSig = null;
+      let bestCount = 0;
+      for (const [sig, c] of counts.entries()) {
+        if (c > bestCount) {
+          bestSig = sig;
+          bestCount = c;
+        }
+      }
+      if (!bestSig || bestCount < 4) continue;
+
+      const records = safe(cfg, "parse records", () => {
+        const items = kids
+          .filter(k => signature(k) === bestSig)
+          .slice(0, 50)
+          .map(card => {
+            // pick a primary link if present
+            const a = card.querySelector && card.querySelector("a[href]");
+            const img = card.querySelector && card.querySelector("img");
+
+            // guess title: prefer headings, otherwise largest text block (simple)
+            const heading = card.querySelector && card.querySelector("h1,h2,h3,h4,h5,h6");
+            const title = normalizeText(elText(heading || card)).slice(0, 240);
+
+            return {
+              title,
+              href: a ? (a.href || a.getAttribute("href") || "") : "",
+              image: img ? (img.currentSrc || img.src || img.getAttribute("src") || "") : "",
+              imageAlt: img ? (img.getAttribute("alt") || "") : "",
+              path: cssPath(card),
+              visible: isElementVisible(card),
+            };
+          })
+          .filter(r => r.title || r.href || r.image);
+
+        if (items.length < 4) return null;
+        return { recordSignature: bestSig, items };
+      }, null);
+
+      if (records) {
+        out.push({
+          type: "records",
+          containerPath: cssPath(parent),
+          visible: isElementVisible(parent),
+          ...records
+        });
+      }
+    }
+
+    return out;
+  }
+
+  // -------------------- main entry --------------------
+  function extract(userOptions = {}) {
+    const cfg = mergeDeep(DEFAULTS, userOptions);
+    const root = safe(cfg, "resolve root", () => {
+      const r = typeof cfg.root === "function" ? cfg.root() : cfg.root;
+      return r || document.body;
+    }, document.body);
+
+    const output = {
+      meta: safe(cfg, "meta", () => ({
+        title: document.title || "",
+        url: location.href,
+        extractedAt: new Date().toISOString(),
+      }), { title: "", url: "", extractedAt: "" }),
+
+      // raw outputs
+      textVisible: "",
+      textHidden: "",
+      textAll: "",
+      links: [],
+      buttons: [],
+      images: [],
+      structures: {
+        tables: [],
+        ariaTables: [],
+        cssGrids: [],
+        flexLayouts: [],
+        records: [],
+      },
+      warnings: [],
+    };
+
+    log(cfg, "Starting extraction with toggles:", cfg.enable);
+
+    // extractors run independently and safely
+    if (cfg.enable.links) {
+      output.links = safe(cfg, "extractLinks", () => extractLinks(cfg, root), []);
+      log(cfg, "links:", output.links.length);
+    }
+    if (cfg.enable.buttons) {
+      output.buttons = safe(cfg, "extractButtons", () => extractButtons(cfg, root), []);
+      log(cfg, "buttons:", output.buttons.length);
+    }
+    if (cfg.enable.images) {
+      output.images = safe(cfg, "extractImages", () => extractImages(cfg, root), []);
+      log(cfg, "images:", output.images.length);
+    }
+    if (cfg.enable.text) {
+      const t = safe(cfg, "extractText", () => extractText(cfg, root), { textVisible: "", textHidden: "", textAll: "" });
+      output.textVisible = t.textVisible;
+      output.textHidden = t.textHidden;
+      output.textAll = t.textAll;
+      log(cfg, "text lengths:", {
+        visible: output.textVisible.length,
+        hidden: output.textHidden.length,
+        all: output.textAll.length
+      });
+    }
+
+    // structures
+    if (cfg.enable.tables) {
+      output.structures.tables = safe(cfg, "extractHtmlTables", () => extractHtmlTables(cfg, root), []);
+      log(cfg, "tables:", output.structures.tables.length);
+    }
+    if (cfg.enable.ariaTables) {
+      output.structures.ariaTables = safe(cfg, "extractAriaTables", () => extractAriaTables(cfg, root), []);
+      log(cfg, "ariaTables:", output.structures.ariaTables.length);
+    }
+    if (cfg.enable.cssGrid) {
+      output.structures.cssGrids = safe(cfg, "extractCssGrids", () => extractCssGrids(cfg, root), []);
+      log(cfg, "cssGrids:", output.structures.cssGrids.length);
+    }
+    if (cfg.enable.flex) {
+      output.structures.flexLayouts = safe(cfg, "extractFlexLayouts", () => extractFlexLayouts(cfg, root), []);
+      log(cfg, "flexLayouts:", output.structures.flexLayouts.length);
+    }
+    if (cfg.enable.records) {
+      output.structures.records = safe(cfg, "extractRecords", () => extractRecords(cfg, root), []);
+      log(cfg, "records containers:", output.structures.records.length);
+    }
+
+    log(cfg, "Extraction done.");
+    return output;
+  }
+
+  // Public API
+  return { extract };
+})();
+
+// Example:
+const res = DomScrubber.extract({ debug: true, enable: { flex: false, cssGrid: false } });
+console.log(res);
+
+</script>
